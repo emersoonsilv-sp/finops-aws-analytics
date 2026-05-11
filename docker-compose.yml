@@ -1,0 +1,12 @@
+services:
+  dashboard:
+    build: .
+    container_name: finops-dashboard
+    ports:
+      - "8501:8501"
+    volumes:
+      - finops_data:/app/data
+    restart: unless-stopped
+
+volumes:
+  finops_data:

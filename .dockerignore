@@ -1,0 +1,14 @@
+.venv/
+venv/
+__pycache__/
+*.pyc
+.git/
+.gitignore
+.vscode/
+.idea/
+data/
+*.db
+*.sqlite
+.DS_Store
+Thumbs.db
+README.md
