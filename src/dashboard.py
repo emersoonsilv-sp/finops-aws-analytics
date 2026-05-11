@@ -12,6 +12,9 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
+from forecast import prever_proximos_dias, projetar_proximo_mes
+from alertas import gerar_todos_alertas
+
 # ---------- Configuração da página ----------
 
 st.set_page_config(
@@ -335,25 +338,52 @@ def grafico_distribuicao_servico(df: pd.DataFrame) -> None:
 
 
 def grafico_tendencia_diaria(df: pd.DataFrame) -> None:
-    st.markdown("### Tendência Diária")
+    st.markdown("### Tendência Diária & Previsão")
+
     diario = df.groupby("data")["custo_usd"].sum().reset_index()
     diario.columns = ["data", "gasto_total"]
 
+    # Calcula previsão dos próximos 30 dias
+    previsao = prever_proximos_dias(df, dias_a_prever=30)
+
     fig = go.Figure()
+
+    # Histórico (linha sólida)
     fig.add_trace(go.Scatter(
         x=diario["data"],
         y=diario["gasto_total"],
         mode="lines",
+        name="Histórico",
         line=dict(color=BLUE_PRIMARY, width=2),
         fill="tozeroy",
         fillcolor="rgba(74, 144, 226, 0.15)",
         hovertemplate="<b>%{x|%d %b %Y}</b><br>$%{y:,.2f}<extra></extra>",
     ))
+
+    # Previsão (linha pontilhada laranja)
+    fig.add_trace(go.Scatter(
+        x=previsao["data"],
+        y=previsao["gasto_previsto"],
+        mode="lines",
+        name="Previsão (30d)",
+        line=dict(color=AWS_ORANGE, width=2, dash="dash"),
+        hovertemplate="<b>%{x|%d %b %Y}</b><br>$%{y:,.2f} (previsto)<extra></extra>",
+    ))
+
     fig.update_xaxes(title=None)
     fig.update_yaxes(title=None, tickformat="$,.0f")
     aplicar_tema_plotly(fig)
+    fig.update_layout(
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1,
+            font=dict(size=11),
+        ),
+    )
     st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
-
 
 def grafico_regiao(df: pd.DataFrame) -> None:
     st.markdown("### Por Região")
@@ -408,6 +438,112 @@ def tabela_top_recursos(df: pd.DataFrame) -> None:
             "Custo Total": st.column_config.NumberColumn(format="$ %.2f"),
         },
     )
+    
+def renderizar_alertas(df: pd.DataFrame) -> None:
+    """Renderiza cards de alertas em destaque."""
+    alertas = gerar_todos_alertas(df)
+    projecao = projetar_proximo_mes(df)
+
+    st.markdown("### Alertas & Projeções")
+
+    # Card de projeção do próximo mês
+    cor_projecao = "#E74C3C" if projecao["variacao_pct"] > 10 else AWS_ORANGE
+    sinal = "+" if projecao["variacao_pct"] >= 0 else ""
+
+    st.markdown(
+        f"""
+        <div style="
+            background: linear-gradient(135deg, {BG_CARD} 0%, #1F2937 100%);
+            border-left: 3px solid {cor_projecao};
+            border-radius: 8px;
+            padding: 16px 20px;
+            margin-bottom: 16px;
+        ">
+            <div style="
+                font-size: 11px;
+                color: {TEXT_MUTED};
+                text-transform: uppercase;
+                letter-spacing: 0.5px;
+                font-weight: 600;
+                margin-bottom: 6px;
+            ">
+                Projeção · Próximos 30 dias
+            </div>
+            <div style="display: flex; align-items: baseline; gap: 16px;">
+                <div style="font-size: 26px; font-weight: 700; color: #FFFFFF;">
+                    ${projecao['total_previsto']:,.0f}
+                </div>
+                <div style="font-size: 14px; color: {cor_projecao}; font-weight: 600;">
+                    {sinal}{projecao['variacao_pct']:.1f}% vs últimos 30 dias
+                </div>
+            </div>
+            <div style="font-size: 12px; color: {TEXT_MUTED}; margin-top: 4px;">
+                Baseado em regressão linear sobre a tendência atual
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # Alertas detectados
+    if not alertas:
+        st.markdown(
+            f"""
+            <div style="
+                background-color: {BG_CARD};
+                border: 1px solid {BORDER};
+                border-radius: 8px;
+                padding: 16px 20px;
+                color: {TEXT_MUTED};
+                font-size: 13px;
+            ">
+                Nenhum alerta crítico detectado no período.
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        return
+
+    for alerta in alertas[:5]:  # Top 5 alertas
+        if alerta["tipo"] == "Serviço em alta":
+            titulo = f"{alerta['servico']} cresceu {alerta['variacao_pct']}%"
+            descricao = f"De ${alerta['gasto_anterior']:,.2f} para ${alerta['gasto_atual']:,.2f} no último mês"
+            cor = "#E74C3C"
+        else:  # Recurso outlier
+            titulo = f"{alerta['recurso_id']} ({alerta['servico']})"
+            descricao = f"Gasto de ${alerta['gasto']:,.2f} — média do serviço: ${alerta['media_servico']:,.2f}"
+            cor = AWS_ORANGE
+
+        st.markdown(
+            f"""
+            <div style="
+                background-color: {BG_CARD};
+                border: 1px solid {BORDER};
+                border-left: 3px solid {cor};
+                border-radius: 8px;
+                padding: 12px 16px;
+                margin-bottom: 8px;
+            ">
+                <div style="
+                    font-size: 10px;
+                    color: {cor};
+                    text-transform: uppercase;
+                    letter-spacing: 0.5px;
+                    font-weight: 600;
+                    margin-bottom: 4px;
+                ">
+                    {alerta['tipo']}
+                </div>
+                <div style="font-size: 14px; font-weight: 600; color: #FFFFFF; margin-bottom: 2px;">
+                    {titulo}
+                </div>
+                <div style="font-size: 12px; color: {TEXT_MUTED};">
+                    {descricao}
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
 
 # ---------- Main ----------
@@ -435,15 +571,20 @@ def main():
 
     st.markdown("<div style='margin-top: 16px;'></div>", unsafe_allow_html=True)
 
+    # Nova linha: tendência+forecast (esquerda) + alertas (direita)
     col3, col4 = st.columns([2, 1], gap="medium")
     with col3:
         grafico_tendencia_diaria(df_filtrado)
     with col4:
-        grafico_regiao(df_filtrado)
+        renderizar_alertas(df_filtrado)
 
     st.markdown("<div style='margin-top: 16px;'></div>", unsafe_allow_html=True)
 
-    tabela_top_recursos(df_filtrado)
+    col5, col6 = st.columns([1, 2], gap="medium")
+    with col5:
+        grafico_regiao(df_filtrado)
+    with col6:
+        tabela_top_recursos(df_filtrado)
 
 
 if __name__ == "__main__":
